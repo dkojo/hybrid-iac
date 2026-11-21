@@ -57,3 +57,13 @@
     name: nginx
     state: started
     enabled: true
+
+# DEMO: a "quick fix" someone made for the on-prem server only. It runs without errors
+# and is idempotent, but the two sites no longer match, so the parity test fails.
+- name: Quick fix, on-prem only - allow password login for a vendor
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/05-vendor-access.conf
+    content: "PasswordAuthentication yes\n"
+    mode: "0600"
+  when: ansible_distribution == 'Rocky'
+  notify: Restart sshd
