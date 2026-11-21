@@ -1,0 +1,8 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+ansible/inventory.ini
+ansible/second-run.log
+parity/
+__pycache__/

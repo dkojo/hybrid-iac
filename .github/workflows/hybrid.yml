@@ -1,0 +1,87 @@
+name: hybrid
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # OIDC sign-in to AWS, no stored keys
+
+# One run at a time: they share the same Terraform state. Never cancel a run mid-apply.
+concurrency:
+  group: hybrid-iac
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  CI_ROLE: arn:aws:iam::870342665742:role/github-hybrid-iac
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  hybrid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform format and validate
+        run: |
+          terraform fmt -check -recursive
+          terraform -chdir=terraform init -backend=false -input=false >/dev/null
+          terraform -chdir=terraform validate
+
+      # A fresh key for this run only, and the runner's own IP so only it can reach the AWS server
+      - name: Create a one-time SSH key
+        run: |
+          ssh-keygen -t ed25519 -N "" -q -f ~/.ssh/id_ed25519
+          echo "TF_VAR_ssh_public_key=$(cat ~/.ssh/id_ed25519.pub)" >> "$GITHUB_ENV"
+          echo "TF_VAR_admin_cidr=$(curl -s https://checkip.amazonaws.com)/32" >> "$GITHUB_ENV"
+
+      - name: Sign in to AWS with OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.CI_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform plan
+        run: |
+          terraform -chdir=terraform init -input=false >/dev/null
+          terraform -chdir=terraform plan -input=false -out=tfplan
+
+      - name: Provision on-prem and AWS servers
+        id: provision
+        run: terraform -chdir=terraform apply -input=false tfplan
+
+      - name: Install Ansible
+        run: pipx install ansible-core==2.18.20
+
+      - name: Configure both servers with Ansible
+        working-directory: ansible
+        run: ansible-playbook site.yml
+
+      # Run it again: a correct role changes nothing the second time
+      - name: Idempotency check
+        working-directory: ansible
+        run: |
+          ansible-playbook site.yml | tee second-run.log
+          grep -E "changed=[1-9]" second-run.log && { echo "Not idempotent: the second run changed something"; exit 1; } || echo "Second run changed nothing on either server"
+
+      - name: Parity test
+        run: |
+          mkdir -p parity
+          (cd ansible && ansible-playbook parity.yml)
+          python3 scripts/parity.py parity/onprem-rocky.txt parity/aws-ec2.txt
+
+      # Always runs, even if a step above failed, so nothing is left running in AWS
+      - name: Destroy AWS resources
+        if: always() && steps.provision.outcome != 'skipped'
+        run: terraform -chdir=terraform destroy -input=false -auto-approve

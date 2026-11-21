@@ -1,0 +1,59 @@
+# The baseline every server gets, wherever it runs. Only built-in Ansible modules, nothing to install.
+
+- name: Install the standard packages
+  ansible.builtin.dnf:
+    name: [nginx, rsync, tar]
+    state: present
+
+- name: Use UTC everywhere, so logs line up across sites
+  ansible.builtin.file:
+    src: /usr/share/zoneinfo/UTC
+    dest: /etc/localtime
+    state: link
+    force: true
+
+- name: Create the ops group
+  ansible.builtin.group:
+    name: ops
+
+- name: Create the deploy user
+  ansible.builtin.user:
+    name: deploy
+    groups: ops
+    shell: /bin/bash
+
+- name: Let the ops group use sudo
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ops
+    content: "%ops ALL=(ALL) NOPASSWD: ALL\n"
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Harden SSH (no root login, keys only)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      # Managed by Ansible
+      PermitRootLogin no
+      PasswordAuthentication no
+    mode: "0600"
+  notify: Restart sshd
+
+- name: Login banner
+  ansible.builtin.copy:
+    dest: /etc/motd
+    content: |
+      Authorised use only. This server is managed by Ansible: manual changes will be overwritten.
+    mode: "0644"
+
+- name: Web page that says where it's running
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: /usr/share/nginx/html/index.html
+    mode: "0644"
+
+- name: Start nginx and keep it running after reboots
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: started
+    enabled: true

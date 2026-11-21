@@ -1,0 +1,13 @@
+# One play, one role, every server: on-prem and AWS get exactly the same configuration.
+- name: Configure every server the same way
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Wait until the server accepts SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+    - name: Gather facts
+      ansible.builtin.setup:
+  roles:
+    - baseline

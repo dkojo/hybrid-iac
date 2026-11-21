@@ -1,0 +1,41 @@
+# Read the same settings from every server and save them as "setting=value" lines, one file per server.
+# scripts/parity.py then compares the files. These are settings, not versions: the two
+# sides run different Linux distributions, but they must be configured the same way.
+- name: Collect the settings that must match across sites
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read settings
+      ansible.builtin.shell: |
+        set -e
+        echo "nginx installed=$(rpm -q nginx >/dev/null && echo yes || echo no)"
+        echo "rsync installed=$(rpm -q rsync >/dev/null && echo yes || echo no)"
+        echo "nginx running=$(systemctl is-active nginx || true)"
+        echo "nginx starts on boot=$(systemctl is-enabled nginx || true)"
+        echo "timezone=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')"
+        echo "deploy user groups=$(id -nG deploy 2>/dev/null | tr ' ' ',' || echo missing)"
+        echo "ops sudo rule=$(cat /etc/sudoers.d/ops 2>/dev/null || echo missing)"
+        echo "ssh root login=$(sshd -T | awk '/^permitrootlogin/ {print $2}')"
+        echo "ssh password login=$(sshd -T | awk '/^passwordauthentication/ {print $2}')"
+        echo "login banner sha256=$(sha256sum /etc/motd | cut -c1-12)"
+      register: settings
+      changed_when: false
+
+    - name: Check the web page from the pipeline runner
+      ansible.builtin.uri:
+        url: "{{ http_url }}"
+        return_content: true
+      register: page
+      delegate_to: localhost
+      become: false
+
+    - name: Save this server's settings
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/../parity/{{ inventory_hostname }}.txt"
+        content: |
+          {{ settings.stdout }}
+          web page=serves {{ page.status }}{{ ' Configured by Ansible' if 'Configured by Ansible' in page.content else ' the wrong page' }}
+        mode: "0644"
+      delegate_to: localhost
+      become: false
