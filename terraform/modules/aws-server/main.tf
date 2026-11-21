@@ -67,13 +67,18 @@ resource "aws_security_group" "server" {
   }
 }
 
+# The latest Amazon Linux 2023 image for arm64, as published by AWS
+data "aws_ssm_parameter" "al2023" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+}
+
 resource "aws_key_pair" "ci" {
   key_name   = var.name
   public_key = var.ssh_public_key
 }
 
 resource "aws_instance" "server" {
-  ami                    = "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+  ami                    = nonsensitive(data.aws_ssm_parameter.al2023.value)
   instance_type          = "t4g.nano"
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.server.id]
@@ -90,7 +95,7 @@ resource "aws_instance" "server" {
   tags = { Name = var.name }
 
   lifecycle {
-    ignore_changes = [ami] # AWS reports the resolved AMI ID back
+    ignore_changes = [ami] # a newer image shouldn't replace a running server mid-run
   }
 }
 
