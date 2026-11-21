@@ -7,6 +7,12 @@
     - name: Wait until the server accepts SSH
       ansible.builtin.wait_for_connection:
         timeout: 300
+    - name: Wait for first-boot setup to finish (cloud-init, where the server has it)
+      ansible.builtin.command: cloud-init status --wait
+      register: cloud_init
+      changed_when: false
+      failed_when: cloud_init.rc not in [0, 2]
+      when: ansible_host != '127.0.0.1'
     - name: Gather facts
       ansible.builtin.setup:
   roles:

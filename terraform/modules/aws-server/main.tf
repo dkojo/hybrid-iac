@@ -94,6 +94,13 @@ resource "aws_instance" "server" {
   }
   tags = { Name = var.name }
 
+  # A t4g.nano has 512 MB of memory, which isn't enough for dnf. A 1 GB swap file fixes that.
+  user_data = <<-EOT
+    #!/bin/bash
+    fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+  EOT
+
   lifecycle {
     ignore_changes = [ami] # a newer image shouldn't replace a running server mid-run
   }
